@@ -1,0 +1,11 @@
+hercules:
+  default_path: gemini
+  gemini:
+    model: gemini-2.5-flash
+    location: us-central1
+  external:
+    # Values are injected using EXTERNAL_MODEL, EXTERNAL_BASE_URL,
+    # and EXTERNAL_API_KEY environment variables.
+    # Do not put credentials in this file.
+    model: null
+    base_url: null
