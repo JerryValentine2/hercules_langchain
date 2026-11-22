@@ -1,55 +1,50 @@
-# Hercules LangChain — v1.0.0 MVP
+# Hercules LangChain — v1 MVP
 
-One working implementation path: **ChatGPT MCP client → Cloud Run HTTPS `/mcp` → Python MCP server → LangChain → Gemini → MCP response**.
+**Default path:** ChatGPT MCP → Cloud Run → Python LangChain → Gemini through Vertex AI using Google Cloud Application Default Credentials (Cloud Run service account). **No separate Gemini API key is needed.** Cloud Run must have an appropriate project, Vertex AI enabled, an authorized service account, and model access.
 
-The existing local Hercules execution engine is separate and unchanged. No MAS or agent orchestration is included.
+**Optional path:** `path="external"` uses an OpenAI-compatible endpoint configured via environment variables. It is included but live external-provider testing is deferred.
 
-## Tool
+## MCP tool
 
-`run_langchain(message: str, product_id: str | None = None)`
+`run_langchain(message: str, product_id: str | None = None, path: str | None = None)`
 
-Success: `{"status":"success","model":"gemini-2.5-flash","answer":"..."}`
+No `path` or `path="gemini"` uses Gemini. `path="external"` uses the configured external endpoint. Unsupported path fails explicitly. Success: `{"status":"success","model":"...","answer":"..."}`; failure: `{"status":"error","error":"..."}`.
 
-Failure: `{"status":"error","error":"..."}`. The service never returns a fabricated model answer.
+## Configuration
 
-## Local run
+Non-secret defaults in `config.yaml`. Deployment-specific overrides: `GEMINI_MODEL`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT`, `EXTERNAL_MODEL`, `EXTERNAL_BASE_URL`. External credentials: `EXTERNAL_API_KEY` from Secret Manager or another approved secret source. Never put secrets in YAML. `PORT` is injected by Cloud Run.
 
-Requires Python 3.11+ and a valid Gemini API key.
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-export GOOGLE_API_KEY="YOUR_GEMINI_API_KEY"
-python app.py
-```
-
-Streamable HTTP MCP endpoint: `http://localhost:8080/mcp`.
-
-## Tests
+## Local tests
 
 ```bash
+python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
 
-Unit tests use a fake model; they **do not** verify Gemini connectivity. A live end-to-end test is required before deployment acceptance.
+Unit tests use fake providers; a passing CI run is **not** a live Gemini/Vertex AI test.
 
-## Cloud Run
+## Local run
 
-From this repository with Google Cloud CLI authenticated and correct project selected:
+Authenticate Google Cloud ADC with an authorized identity, choose a project with Vertex AI enabled and Gemini model access:
 
 ```bash
-gcloud run deploy hercules-langchain --source . --region us-central1 \
-  --no-allow-unauthenticated \
-  --set-secrets GOOGLE_API_KEY=hercules-gemini-api-key:latest
+gcloud auth application-default login
+export GOOGLE_CLOUD_PROJECT="YOUR_PROJECT_ID"
+python app.py
 ```
 
-First create the Secret Manager secret `hercules-gemini-api-key` with the actual key and grant the Cloud Run runtime service account access to that secret. Configure Cloud Run IAM access for the intended MCP client; **ChatGPT's MCP connector must be able to authenticate to the service**. Do not make the endpoint public without an explicit access-control decision.
+MCP Streamable HTTP endpoint: `http://localhost:8080/mcp`.
 
-A live ChatGPT MCP connection is not configured by this repository alone. Confirm that your ChatGPT MCP client supports the selected Cloud Run authentication mechanism. Deployment command is an example, not evidence of deployment.
+## Deployment from your computer
 
-## Runtime settings
+Download GitHub repository ZIP, extract, then from the extracted folder run:
 
-`GOOGLE_API_KEY` (required), `GEMINI_MODEL` (default `gemini-2.5-flash`), `MODEL_TIMEOUT_SECONDS` (default `60`), `PORT` (Cloud Run injects `8080`), `LOG_LEVEL` (default `INFO`).
+```bash
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com
+gcloud run deploy hercules-langchain --source . --region us-central1 --no-allow-unauthenticated
+```
 
-**Status:** Source implementation, not yet live verified against Gemini, Cloud Run or ChatGPT. Mercury implementation and technical validation gates remain pending.
+The Cloud Run runtime service account needs `roles/aiplatform.user` (or an appropriate narrower role) for Vertex AI and the configured model must be available to the project/region. Authenticate the ChatGPT MCP client to Cloud Run using a supported mechanism. Do not make the service public solely to bypass authentication.
+
+**Deployment is not complete until** a real ChatGPT → MCP → Cloud Run → Gemini → ChatGPT request succeeds. External path is implemented but not live-tested.
