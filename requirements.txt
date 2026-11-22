@@ -1,0 +1,2 @@
+mcp>=1.12,<2
+langchain-google-genai>=2.1,<5
