@@ -4,9 +4,8 @@ import types
 import unittest
 from unittest.mock import patch
 
-os.environ.setdefault("MODEL_TIMEOUT_SECONDS", "60")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from app import run_message
+from app import run_message, build_model
 
 
 class TestRunMessage(unittest.TestCase):
@@ -15,34 +14,58 @@ class TestRunMessage(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(run_message(value)["status"], "error")
 
-    def test_no_credentials(self):
-        with patch.dict(os.environ, {}, clear=True):
-            result = run_message("Hello")
-        self.assertEqual(result["status"], "error")
+    def test_invalid_path(self):
+        self.assertEqual(run_message("Hello", path="unknown")["status"], "error")
 
-    def test_success_uses_model(self):
+    def test_default_gemini_without_api_key(self):
         class FakeModel:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
             def invoke(self, message):
-                self.message = message
-                return types.SimpleNamespace(content="Hello from model")
-        fake = types.ModuleType("langchain_google_genai")
-        fake.ChatGoogleGenerativeAI = FakeModel
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test"}), patch.dict(sys.modules, {"langchain_google_genai": fake}):
+                return types.SimpleNamespace(content="Hello from Gemini")
+        fake = types.ModuleType("langchain_google_vertexai")
+        fake.ChatVertexAI = FakeModel
+        with patch.dict(os.environ, {}, clear=True), patch.dict(sys.modules, {"langchain_google_vertexai": fake}):
             result = run_message("Hello")
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["answer"], "Hello from model")
+        self.assertEqual(result["answer"], "Hello from Gemini")
 
-    def test_provider_failure_not_fabricated(self):
+    def test_explicit_gemini(self):
+        class FakeModel:
+            def __init__(self, **kwargs):
+                pass
+            def invoke(self, message):
+                return types.SimpleNamespace(content="Gemini")
+        fake = types.ModuleType("langchain_google_vertexai")
+        fake.ChatVertexAI = FakeModel
+        with patch.dict(sys.modules, {"langchain_google_vertexai": fake}):
+            self.assertEqual(run_message("Hi", path="gemini")["status"], "success")
+
+    def test_external_missing_config(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(run_message("Hello", path="external")["status"], "error")
+
+    def test_external_adapter_constructed(self):
+        class FakeModel:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+        fake = types.ModuleType("langchain_openai")
+        fake.ChatOpenAI = FakeModel
+        env = {"EXTERNAL_MODEL": "example-model", "EXTERNAL_BASE_URL": "https://example.invalid/v1", "EXTERNAL_API_KEY": "test"}
+        with patch.dict(os.environ, env), patch.dict(sys.modules, {"langchain_openai": fake}):
+            model, name = build_model("external")
+        self.assertEqual(name, "example-model")
+        self.assertEqual(model.kwargs["base_url"], env["EXTERNAL_BASE_URL"])
+
+    def test_model_failure_not_fabricated(self):
         class FailingModel:
             def __init__(self, **kwargs):
                 pass
             def invoke(self, message):
                 raise RuntimeError("provider down")
-        fake = types.ModuleType("langchain_google_genai")
-        fake.ChatGoogleGenerativeAI = FailingModel
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test"}), patch.dict(sys.modules, {"langchain_google_genai": fake}):
+        fake = types.ModuleType("langchain_google_vertexai")
+        fake.ChatVertexAI = FailingModel
+        with patch.dict(sys.modules, {"langchain_google_vertexai": fake}):
             result = run_message("Hello")
         self.assertEqual(result["status"], "error")
         self.assertNotIn("answer", result)
